@@ -506,3 +506,49 @@ func waitForDenorm(ctrl *Controller) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+func TestDenormalizeWorksAccumulatesDuringRefresh(t *testing.T) {
+	// While an author refresh is in flight GetAuthor serves the pre-refresh
+	// snapshot. Successive denormalization batches must build on each other
+	// instead of each starting from that snapshot, or only the last batch
+	// survives and the author ends up with a fraction of their works.
+	ctx := context.Background()
+
+	authorID := int64(1000)
+	author := AuthorResource{ForeignID: authorID}
+
+	getter := NewMockgetter(gomock.NewController(t))
+	cache := newMemoryCache()
+
+	const works = 5
+	for id := int64(1); id <= works; id++ {
+		work := workResource{
+			ForeignID: id,
+			Title:     "work",
+			Books:     []bookResource{{ForeignID: id * 100, Title: "work"}},
+			Authors:   []AuthorResource{{ForeignID: authorID}},
+		}
+		workBytes, err := json.Marshal(work)
+		require.NoError(t, err)
+		getter.EXPECT().GetWork(gomock.Any(), id, gomock.Any()).Return(workBytes, authorID, nil).AnyTimes()
+	}
+
+	snapshot, err := json.Marshal(author)
+	require.NoError(t, err)
+	cache.Set(ctx, AuthorKey(authorID), snapshot, time.Hour)
+	// A refresh is in flight, so the pre-refresh snapshot is recorded.
+	cache.Set(ctx, refreshAuthorKey(authorID), snapshot, time.Hour)
+
+	ctrl, err := NewController(cache, getter, nil, nil)
+	require.NoError(t, err)
+
+	// Deliver the works in separate batches, as a refresh does.
+	for id := int64(1); id <= works; id++ {
+		require.NoError(t, ctrl.denormalizeWorks(ctx, authorID, id))
+	}
+
+	authorBytes, ok := cache.Get(ctx, AuthorKey(authorID))
+	require.True(t, ok)
+	require.NoError(t, json.Unmarshal(authorBytes, &author))
+	assert.Len(t, author.Works, works)
+}

@@ -53,7 +53,7 @@ func NewPersister(ctx context.Context, cache cache[[]byte], dsn string) (*Persis
 
 // Persist records an author's refresh as in-flight.
 func (p *Persister) Persist(ctx context.Context, authorID int64, bytes []byte) error {
-	p.cache.Set(ctx, refreshAuthorKey(authorID), bytes, 365*24*time.Hour)
+	p.cache.Set(ctx, refreshAuthorKey(authorID), bytes, _refreshStateTTL)
 	return nil
 }
 
@@ -100,6 +100,9 @@ func (p *Persister) Persisted(ctx context.Context) ([]int64, error) {
 
 	return authorIDs, err
 }
+
+// _refreshStateTTL is how long an in-flight refresh's recorded state is kept.
+const _refreshStateTTL = 365 * 24 * time.Hour
 
 func refreshAuthorKey(authorID int64) string {
 	return fmt.Sprintf("ra%d", authorID)
