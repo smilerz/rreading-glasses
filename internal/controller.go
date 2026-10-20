@@ -977,6 +977,12 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 		}
 		workID = work.ForeignID // GetWork can return a merged work with a different ID.
 
+		// Hardcover leaves many editions' language blank. Do this here, where
+		// cached works are merged into the author, so it applies to existing data.
+		for i := range work.Books {
+			work.Books[i].Language = languageOrGuess(work.Books[i].Language, work.Books[i].Title)
+		}
+
 		idx, found := slices.BinarySearchFunc(author.Works, workID, func(w workResource, id int64) int {
 			return cmp.Compare(w.ForeignID, id)
 		})
