@@ -34,6 +34,7 @@ type server struct {
 	Proxy    string `default:"" env:"PROXY" help:"HTTP proxy URL to use for upstream requests."`
 	Upstream string `default:"api.hardcover.app" env:"UPSTREAM" help:"Upstream host (e.g. www.example.com)."`
 
+	RetryAttempts int    `default:"5" env:"RETRY_ATTEMPTS" help:"Attempts for upstream requests that fail with 429, 502, 503 or 504, including the first (1 disables retries)."`
 	IgnoreSeries  string `default:"" env:"IGNORE_SERIES" help:"Case-insensitive regular expression; works in a series whose title matches are left out of author lists (e.g. 'split[- ]volumes?' for translations published in volumes)."`
 	InferLanguage bool   `default:"false" env:"INFER_LANGUAGE" help:"Label blank-language editions with a non-English language code when the title clearly isn't English, so downstream language filters can drop them."`
 
@@ -69,7 +70,7 @@ func (s *server) Run() error {
 		RoundTripper: &internal.HeaderTransport{
 			Key:          "Authorization",
 			Value:        s.HardcoverAuth,
-			RoundTripper: http.DefaultTransport,
+			RoundTripper: &internal.RetryTransport{Attempts: s.RetryAttempts, RoundTripper: http.DefaultTransport},
 		},
 	}
 

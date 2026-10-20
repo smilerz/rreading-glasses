@@ -736,6 +736,13 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 		n++
 	}
 
+	if n == 0 {
+		// Finding nothing most likely means the upstream failed, so don't keep
+		// the empty author for days; the next request tries again.
+		Log(ctx).Warn("no works found for author, expiring it so the next request retries", "authorID", authorID)
+		_ = c.cache.Expire(ctx, AuthorKey(authorID))
+	}
+
 	slices.Sort(workIDSToDenormalize)
 	workIDSToDenormalize = slices.Compact(workIDSToDenormalize)
 

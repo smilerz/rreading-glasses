@@ -552,3 +552,32 @@ func TestDenormalizeWorksAccumulatesDuringRefresh(t *testing.T) {
 	require.NoError(t, json.Unmarshal(authorBytes, &author))
 	assert.Len(t, author.Works, works)
 }
+
+func TestRefreshAuthorWithoutWorksIsNotKept(t *testing.T) {
+	// A refresh that finds no works (e.g. the upstream rate limited us) must not
+	// leave the empty author cached for days.
+	t.Parallel()
+
+	ctx := context.Background()
+	authorID := int64(1000)
+
+	authorBytes, err := json.Marshal(AuthorResource{ForeignID: authorID})
+	require.NoError(t, err)
+
+	getter := NewMockgetter(gomock.NewController(t))
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID).Return(authorBytes, nil).AnyTimes()
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID).Return(func(yield func(int64) bool) {}).AnyTimes()
+
+	cache := newMemoryCache()
+	ctrl, err := NewController(cache, getter, nil, nil)
+	require.NoError(t, err)
+	go ctrl.Run(t.Context())
+
+	_, _, err = ctrl.GetAuthor(ctx, authorID) // Starts the refresh.
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		_, ttl, ok := cache.GetWithTTL(ctx, AuthorKey(authorID))
+		return !ok || ttl <= 0
+	}, 5*time.Second, 20*time.Millisecond, "the empty author must not stay cached")
+}
