@@ -34,7 +34,8 @@ type server struct {
 	Proxy    string `default:"" env:"PROXY" help:"HTTP proxy URL to use for upstream requests."`
 	Upstream string `default:"api.hardcover.app" env:"UPSTREAM" help:"Upstream host (e.g. www.example.com)."`
 
-	InferLanguage bool `default:"false" env:"INFER_LANGUAGE" help:"Label blank-language editions with a non-English language code when the title clearly isn't English, so downstream language filters can drop them."`
+	IgnoreSeries  string `default:"" env:"IGNORE_SERIES" help:"Case-insensitive regular expression; works in a series whose title matches are left out of author lists (e.g. 'split[- ]volumes?' for translations published in volumes)."`
+	InferLanguage bool   `default:"false" env:"INFER_LANGUAGE" help:"Label blank-language editions with a non-English language code when the title clearly isn't English, so downstream language filters can drop them."`
 
 	HardcoverAuth     string `required:"" env:"HARDCOVER_AUTH" xor:"hardcover-auth" help:"Hardcover Authorization header, e.g. 'Bearer ...'"`
 	HardcoverAuthFile []byte `required:"" type:"filecontent" xor:"hardcover-auth" env:"HARDCOVER_AUTH_FILE" help:"File containing the Hardcover Authorization header, e.g. 'Bearer ...'"`
@@ -43,6 +44,9 @@ type server struct {
 func (s *server) Run() error {
 	_ = s.LogConfig.Run()
 	internal.SetInferLanguage(s.InferLanguage)
+	if err := internal.SetIgnoreSeries(s.IgnoreSeries); err != nil {
+		return err
+	}
 	reg := internal.NewMetrics()
 
 	cf, err := s.Cache(reg)

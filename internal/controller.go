@@ -987,6 +987,14 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 			return cmp.Compare(w.ForeignID, id)
 		})
 
+		if inIgnoredSeries(work) {
+			Log(ctx).Debug("skipping work in ignored series", "workID", workID, "authorID", authorID)
+			if found {
+				author.Works = slices.Delete(author.Works, idx, idx+1)
+			}
+			continue
+		}
+
 		if len(work.Books) == 0 {
 			Log(ctx).Warn("work had no editions", "workID", workID)
 			continue
