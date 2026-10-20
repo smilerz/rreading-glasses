@@ -1097,6 +1097,13 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 
 	c.cache.Set(ctx, AuthorKey(authorID), out, fuzz(_authorTTL, 1.5))
 
+	// While a refresh is in flight GetAuthor serves the recorded pre-refresh
+	// state, so the next batch would otherwise start from it and discard this
+	// batch's works. Carry the merged result forward.
+	if _, refreshing := c.cache.Get(ctx, refreshAuthorKey(authorID)); refreshing {
+		c.cache.Set(ctx, refreshAuthorKey(authorID), out, _refreshStateTTL)
+	}
+
 	return nil
 }
 
