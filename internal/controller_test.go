@@ -109,7 +109,7 @@ func TestIncrementalDenormalization(t *testing.T) {
 	_, _, err = ctrl.GetBook(ctx, frenchEdition.ForeignID)
 	require.NoError(t, err)
 
-	waitForDenorm(ctrl)
+	waitForDenorm(t, ctrl)
 
 	workBytes, _, err := ctrl.GetWork(ctx, work.ForeignID)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestIncrementalDenormalization(t *testing.T) {
 	require.NoError(t, json.Unmarshal(workBytes, &w))
 	assert.Len(t, w.Books, 2)
 
-	waitForDenorm(ctrl)
+	waitForDenorm(t, ctrl)
 
 	// The work should have also been updated on the author.
 	authorBytes, _, err = ctrl.GetAuthor(ctx, author.ForeignID)
@@ -149,7 +149,7 @@ func TestIncrementalDenormalization(t *testing.T) {
 	_ = ctrl.cache.Expire(ctx, AuthorKey(author.ForeignID))
 	_, _, _ = ctrl.GetAuthor(ctx, author.ForeignID)
 
-	waitForDenorm(ctrl)
+	waitForDenorm(t, ctrl)
 
 	authorBytes, _, err = ctrl.GetAuthor(ctx, author.ForeignID)
 	require.NoError(t, err)
@@ -492,11 +492,18 @@ func TestFuzz(t *testing.T) {
 	assert.Greater(t, fuzzed, _authorTTL)
 }
 
-func waitForDenorm(ctrl *Controller) {
-	for ctrl.metrics.refreshWaitingGet() != 0 {
-		time.Sleep(100 * time.Millisecond)
-	}
-	for ctrl.metrics.denormWaitingGet() != 0 {
+// waitForDenorm waits until no refresh or denormalization work is left. It fails
+// the test with the counter values after 30 seconds, instead of leaving the test
+// to hang until Go's 10 minute alarm.
+func waitForDenorm(t *testing.T, ctrl *Controller) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for ctrl.metrics.refreshWaitingGet() != 0 || ctrl.metrics.denormWaitingGet() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("denormalization did not settle within 30s: refreshWaiting=%v denormWaiting=%v",
+				ctrl.metrics.refreshWaitingGet(), ctrl.metrics.denormWaitingGet())
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -505,6 +512,42 @@ func waitForDenorm(ctrl *Controller) {
 	} else {
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// A refresh that panics must still stop counting as waiting. It used to leave
+// refreshWaiting at 1 forever, which made waitForDenorm spin.
+func TestPanickingRefreshStillCompletes(t *testing.T) {
+	ctx := t.Context()
+	getter := NewMockgetter(gomock.NewController(t))
+	ctrl, err := NewController(newMemoryCache(), getter, nil, nil)
+	require.NoError(t, err)
+	go ctrl.Run(ctx)
+
+	authorID := int64(100)
+	authorBytes, err := json.Marshal(AuthorResource{ForeignID: authorID})
+	require.NoError(t, err)
+
+	called := make(chan struct{})
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID).Return(authorBytes, nil)
+	// Ranging over a nil sequence panics inside the refresh.
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID).DoAndReturn(
+		func(context.Context, int64) iter.Seq[int64] {
+			close(called)
+			return nil
+		},
+	)
+
+	_, _, err = ctrl.GetAuthor(ctx, authorID)
+	require.NoError(t, err)
+
+	select {
+	case <-called:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the refresh never started")
+	}
+
+	waitForDenorm(t, ctrl)
+	assert.Zero(t, ctrl.metrics.refreshWaitingGet())
 }
 
 func TestDenormalizeWorksAccumulatesDuringRefresh(t *testing.T) {

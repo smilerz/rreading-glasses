@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAccumulateEdges(t *testing.T) {
@@ -89,4 +90,29 @@ func TestAccumulateSlice(t *testing.T) {
 
 	_, ok := <-consumer
 	assert.False(t, ok)
+}
+
+// A fast consumer used to read the buffer length before accumulate had removed
+// the edge it was just handed, which left the gauge at 1 with nothing to do.
+func TestDenormWaitingSettlesToZero(t *testing.T) {
+	for range 500 {
+		metrics := newControllerMetrics(nil)
+		producer := make(chan edge)
+		consumer := accumulate(producer, &edgebuf{}, metrics.denormBufferedSet)
+
+		processed := make(chan struct{})
+		go func() {
+			for range consumer {
+				metrics.denormInflightAdd(1)
+				metrics.denormInflightAdd(-1) // Finishing at once is the case that used to leave the gauge behind.
+				processed <- struct{}{}
+			}
+		}()
+
+		producer <- edge{kind: authorEdge, parentID: 1, childIDs: newSet(int64(10))}
+		<-processed
+
+		require.Eventually(t, func() bool { return metrics.denormWaitingGet() == 0 }, 2*time.Second, time.Millisecond)
+		close(producer)
+	}
 }

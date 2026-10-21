@@ -295,7 +295,7 @@ func TestGetBookDataIntegrity(t *testing.T) {
 		assert.Equal(t, int64(30405274), work.Books[0].ForeignID)
 	})
 
-	waitForDenorm(ctrl)
+	waitForDenorm(t, ctrl)
 
 	t.Run("GetAuthor", func(t *testing.T) {
 		authorBytes, ttl, err := ctrl.GetAuthor(ctx, 51942)
