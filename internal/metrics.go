@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +44,12 @@ var _patternRE = regexp.MustCompile(`\{[^/]+\}`)
 type controllerMetrics struct {
 	totals *prometheus.CounterVec
 	gauge  *prometheus.GaugeVec
+
+	// The denormalization gauge is the steps waiting in the buffer plus the one
+	// being processed, so it is zero only when no work is left.
+	denormMu       sync.Mutex
+	denormBuffered int64
+	denormInflight int64
 }
 
 type cacheMetrics struct {
@@ -293,6 +300,29 @@ func (dbm *dbMetrics) seriesSet(n int64) {
 
 func (cm *controllerMetrics) denormWaitingSet(n int) {
 	cm.gauge.WithLabelValues("denormalization").Set(float64(n))
+}
+
+// denormBufferedSet records how many denormalization steps sit in the buffer.
+func (cm *controllerMetrics) denormBufferedSet(n int) {
+	cm.denormMu.Lock()
+	defer cm.denormMu.Unlock()
+
+	cm.denormBuffered = int64(n)
+	cm.denormPublishLocked()
+}
+
+// denormInflightAdd records that a denormalization step was taken from the
+// buffer for processing (delta 1) or finished (delta -1).
+func (cm *controllerMetrics) denormInflightAdd(delta int64) {
+	cm.denormMu.Lock()
+	defer cm.denormMu.Unlock()
+
+	cm.denormInflight += delta
+	cm.denormPublishLocked()
+}
+
+func (cm *controllerMetrics) denormPublishLocked() {
+	cm.gauge.WithLabelValues("denormalization").Set(float64(cm.denormBuffered + cm.denormInflight))
 }
 
 func (cm *controllerMetrics) denormWaitingGet() float64 {

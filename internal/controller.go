@@ -703,6 +703,11 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 		if r := recover(); r != nil {
 			Log(ctx).Error("panic", "details", r)
 		}
+
+		// Always tell the denormalization loop this refresh is over, even after a
+		// panic: that is what stops it counting as waiting and clears its persisted
+		// in-flight record. Without it a panic left the refresh counted forever.
+		c.denormC <- edge{kind: refreshDone, parentID: authorID}
 	}()
 
 	Log(ctx).Info("fetching all works for author", "authorID", authorID)
@@ -749,7 +754,6 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 	if len(workIDSToDenormalize) > 0 {
 		c.denormC <- edge{kind: authorEdge, parentID: authorID, childIDs: newSet(workIDSToDenormalize...)}
 	}
-	c.denormC <- edge{kind: refreshDone, parentID: authorID}
 	Log(ctx).Info("fetched all works for author", "authorID", authorID, "count", len(workIDSToDenormalize), "duration", time.Since(start).String())
 }
 
@@ -796,8 +800,9 @@ func (c *Controller) Run(ctx context.Context) {
 	}()
 
 	denormBuf := &edgebuf{}
-	denorms := accumulate(c.denormC, denormBuf)
+	denorms := accumulate(c.denormC, denormBuf, c.metrics.denormBufferedSet)
 	for edge := range denorms {
+		c.metrics.denormInflightAdd(1)
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 		ctx = context.WithValue(ctx, middleware.RequestIDKey, fmt.Sprintf("denorm-%d-%d", edge.kind, edge.parentID))
 
@@ -820,7 +825,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		}
 		cancel()
-		c.metrics.denormWaitingSet(denormBuf.len())
+		c.metrics.denormInflightAdd(-1)
 	}
 }
 
