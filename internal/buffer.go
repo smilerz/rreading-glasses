@@ -16,10 +16,14 @@ type bbuffer[T any] interface {
 // accumulate reads values produced by the consumer into an in-memory buffer. A
 // channel is returned which provides those buffered values for consumption.
 //
+// Each observe function is called with the number of buffered values after
+// every push and pop. It runs on the accumulating goroutine, so what it sees is
+// never stale.
+//
 // This is helpful for smoothing out spikes in activity. Without this we could
 // have tens of thousands of idle goroutines, at which point the scheduler can
 // eat up CPU trying to find something to run.
-func accumulate[T any](producer <-chan T, buf bbuffer[T]) <-chan T {
+func accumulate[T any](producer <-chan T, buf bbuffer[T], observe ...func(buffered int)) <-chan T {
 	c := make(chan T)
 
 	go func() {
@@ -44,6 +48,10 @@ func accumulate[T any](producer <-chan T, buf bbuffer[T]) <-chan T {
 				buf.push(val)
 			case consumer <- next:
 				_ = buf.pop()
+			}
+
+			for _, f := range observe {
+				f(buf.len())
 			}
 		}
 	}()

@@ -476,7 +476,7 @@ func TestGRGetBookDataIntegrity(t *testing.T) {
 		_, _, err := ctrl.GetWork(ctx, 6803732)
 		assert.NoError(t, err)
 
-		waitForDenorm(ctrl)
+		waitForDenorm(t, ctrl)
 
 		workBytes, ttl, err := ctrl.GetWork(ctx, 6803732)
 		assert.NoError(t, err)
@@ -496,7 +496,7 @@ func TestGRGetBookDataIntegrity(t *testing.T) {
 	})
 
 	t.Run("GetAuthor", func(t *testing.T) {
-		waitForDenorm(ctrl)
+		waitForDenorm(t, ctrl)
 
 		authorBytes, ttl, err := ctrl.GetAuthor(ctx, 51942)
 		require.NoError(t, err)
